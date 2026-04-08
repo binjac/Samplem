@@ -8,32 +8,185 @@
           content="default-src 'self' tauri: asset: 'unsafe-inline' 'unsafe-eval'">
   </head>
   <body>
-    <h1>Samplem</h1>
 
-    <div id="drop" class="drop">
-      <div>Drop a folder here or choose one</div>
-      <div class="row">
+    <header>
+      <span class="logo">samplem</span>
+      <span class="tagline">sample converter &amp; organizer</span>
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-tab="convert">Convert</button>
+        <button class="tab" data-tab="library">Library</button>
+      </nav>
+    </header>
+
+    <!-- ══════════════ CONVERT TAB ══════════════ -->
+    <div id="tab-convert" class="tab-content">
+
+      <!-- Drop zone — shrinks when running -->
+      <div id="drop" class="drop-zone">
+        <div class="drop-hero">
+          <div class="drop-icon">⬇</div>
+          <div class="drop-title">Drop your sample folder here</div>
+          <div class="drop-sub">or</div>
+          <button id="choose" class="btn-secondary">Choose folder…</button>
+        </div>
         <input id="folder" type="text" placeholder="/path/to/folder" />
-        <button id="choose">Choose…</button>
       </div>
-    </div>
 
-    <div class="opts">
-      <label><input id="normalize" type="checkbox" checked /> Normalize</label>
-      <label><input id="trim" type="checkbox" /> Trim silence</label>
-      <label>Layout
-        <select id="layout">
-          <option value="keep">Keep subfolders</option>
-          <option value="flat-prefix">Flat with prefix</option>
-          <option value="flat" selected>Flat</option>
+      <!-- Queue (multiple folders) -->
+      <div id="queue-section" class="queue-section hidden">
+        <div class="queue-header">
+          <span class="queue-title">Queue</span>
+          <button id="queue-clear" class="btn-ghost">Clear all</button>
+        </div>
+        <ul id="queue-list" class="queue-list"></ul>
+      </div>
+
+      <!-- Options + Run -->
+      <div class="options-panel">
+        <div class="opts-row">
+          <!-- Hardware profile -->
+          <label class="select-label">
+            <div class="opt-text">
+              <span class="opt-name">Profile</span>
+              <span class="opt-desc">Preset for target device</span>
+            </div>
+            <select id="profile">
+              <option value="generic">Generic</option>
+              <option value="octatrack">Octatrack</option>
+              <option value="mpc">MPC</option>
+              <option value="sp404">SP-404</option>
+            </select>
+          </label>
+
+          <label class="toggle-label">
+            <input id="normalize" type="checkbox" checked />
+            <div class="opt-text">
+              <span class="opt-name">Normalize</span>
+              <span class="opt-desc">Boost or reduce each file's peak level to 0 dBFS</span>
+            </div>
+          </label>
+          <label class="toggle-label">
+            <input id="trim" type="checkbox" />
+            <div class="opt-text">
+              <span class="opt-name">Trim silence</span>
+              <span class="opt-desc">Remove leading &amp; trailing silence</span>
+            </div>
+          </label>
+          <label class="select-label">
+            <div class="opt-text">
+              <span class="opt-name">Layout</span>
+              <span class="opt-desc">Output folder organization</span>
+            </div>
+            <select id="layout">
+              <option value="keep">Keep subfolders</option>
+              <option value="flat-prefix">Flat + prefix</option>
+              <option value="flat" selected>Flat</option>
+            </select>
+          </label>
+        </div>
+        <button id="run" class="btn-primary">Run</button>
+      </div>
+
+      <!-- Running panel -->
+      <div id="panel-running" class="running-panel hidden">
+        <div class="run-header">
+          <div class="run-status">
+            <span id="run-label">Converting…</span>
+            <span id="run-count" class="run-count"></span>
+          </div>
+          <button id="cancel" class="btn-cancel">Cancel</button>
+        </div>
+        <div class="progress-bar-track">
+          <div id="progress-bar" class="progress-bar-fill" style="width:0%"></div>
+        </div>
+        <div class="now-block">
+          <span class="now-label">Now</span>
+          <span id="now-file" class="now-file">—</span>
+        </div>
+        <ul id="recent-list" class="recent-list"></ul>
+      </div>
+
+      <!-- Done panel -->
+      <div id="panel-done" class="done-panel hidden">
+        <div class="done-left">
+          <span class="done-check">✓</span>
+          <div>
+            <div class="done-title">Conversion complete</div>
+            <div class="done-meta">
+              <span id="stat-files" class="stat-files">—</span> files
+              &nbsp;·&nbsp;
+              <span id="stat-time">—</span>
+            </div>
+          </div>
+        </div>
+        <div class="done-right">
+          <code id="stat-path" class="stat-path"></code>
+          <button id="reveal-btn" class="btn-reveal">Show in Finder</button>
+        </div>
+      </div>
+
+      <!-- Error panel -->
+      <div id="panel-error" class="error-panel hidden">
+        ⚠ Finished with errors — check the raw log below.
+      </div>
+
+      <details id="log-details" class="log-details">
+        <summary>Raw log</summary>
+        <textarea id="log" readonly></textarea>
+      </details>
+
+    </div><!-- /tab-convert -->
+
+    <!-- ══════════════ LIBRARY TAB ══════════════ -->
+    <div id="tab-library" class="tab-content hidden">
+
+      <div class="lib-toolbar">
+        <button id="lib-choose" class="btn-secondary">Connect folder…</button>
+        <span id="lib-root-label" class="lib-root-label"></span>
+        <input id="lib-search" type="search" placeholder="Search filename or folder…" class="lib-search" />
+        <select id="lib-format" class="lib-fmt-sel">
+          <option value="">All formats</option>
+          <option value="wav">WAV</option>
+          <option value="aif">AIF / AIFF</option>
         </select>
-      </label>
-      <button id="run">Run</button>
-    </div>
+        <span id="lib-count" class="lib-count"></span>
+        <button id="lib-rescan" class="btn-ghost hidden">Rescan</button>
+      </div>
 
-    <textarea id="log" readonly></textarea>
+      <div id="lib-scanning" class="lib-scanning hidden">
+        <div class="lib-scan-track"><div id="lib-scan-bar" class="lib-scan-fill" style="width:0%"></div></div>
+        <span id="lib-scan-label">Scanning…</span>
+      </div>
 
-    <!-- IMPORTANT: point to /src/main.ts (or ./src/main.ts) -->
+      <div id="lib-table-wrap" class="lib-table-wrap">
+        <table class="lib-table">
+          <thead>
+            <tr>
+              <th>Filename</th>
+              <th>Fmt</th>
+              <th>Duration</th>
+              <th>SR</th>
+              <th>Ch</th>
+              <th>Folder</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="lib-tbody"></tbody>
+        </table>
+        <div id="lib-empty" class="lib-empty hidden">No samples found — connect a folder to get started.</div>
+      </div>
+
+      <!-- Waveform + player -->
+      <div id="lib-player" class="lib-player hidden">
+        <button id="lib-stop" class="btn-cancel lib-stop-btn">■</button>
+        <div class="lib-wave-wrap">
+          <svg id="lib-waveform" class="lib-waveform" viewBox="0 0 400 40" preserveAspectRatio="none"></svg>
+        </div>
+        <span id="lib-player-name" class="lib-player-name">—</span>
+      </div>
+
+    </div><!-- /tab-library -->
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

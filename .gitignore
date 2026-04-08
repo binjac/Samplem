@@ -13,3 +13,6 @@ samplem-ui/.turbo/
 # Rust build caches
 samplem-ui/src-tauri/target/
 samplem-ui/src-tauri/gen/
+
+# Claude
+.claude

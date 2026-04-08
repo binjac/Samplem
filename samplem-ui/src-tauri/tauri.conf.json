@@ -14,8 +14,8 @@
     "windows": [
       {
         "title": "Samplem",
-        "width": 760,
-        "height": 520
+        "width": 1600,
+        "height": 800
       }
     ],
     "security": {
