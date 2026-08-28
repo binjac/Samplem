@@ -21,7 +21,6 @@ const folderInput  = byId<HTMLInputElement>("folder");
 const chooseBtn    = byId<HTMLButtonElement>("choose");
 const runBtn       = byId<HTMLButtonElement>("run");
 const cancelBtn    = byId<HTMLButtonElement>("cancel");
-const profileSel   = byId<HTMLSelectElement>("profile");
 const normalizeEl  = byId<HTMLInputElement>("normalize");
 const trimEl       = byId<HTMLInputElement>("trim");
 const layoutEl     = byId<HTMLSelectElement>("layout");
@@ -60,30 +59,28 @@ document.querySelectorAll<HTMLButtonElement>(".tab").forEach(btn => {
 });
 
 // ─────────────────────────────────────────────
-//  Hardware profiles
+//  Layout description
 // ─────────────────────────────────────────────
-const profiles: Record<string, { normalize: boolean; trim: boolean; layout: string }> = {
-  generic:    { normalize: true,  trim: false, layout: "flat" },
-  octatrack:  { normalize: false, trim: false, layout: "keep" },
-  mpc:        { normalize: true,  trim: false, layout: "flat" },
-  sp404:      { normalize: true,  trim: false, layout: "flat" },
+const layoutDescs: Record<string, string> = {
+  "keep":        "Output mirrors the original subfolder tree inside SAMPLEM-REPACKED.",
+  "flat-prefix": "All files in one folder, prefixed with their original subfolder name.",
+  "flat":        "All files in one flat folder. Duplicated filenames get a numeric suffix.",
 };
 
-profileSel.addEventListener("change", () => {
-  const p = profiles[profileSel.value];
-  if (!p) return;
-  normalizeEl.checked = p.normalize;
-  trimEl.checked      = p.trim;
-  layoutEl.value      = p.layout;
-});
+const layoutDesc = byId<HTMLSpanElement>("layout-desc");
+function updateLayoutDesc() { layoutDesc.textContent = layoutDescs[layoutEl.value] ?? ""; }
+layoutEl.addEventListener("change", updateLayoutDesc);
+updateLayoutDesc();
 
 // ─────────────────────────────────────────────
 //  Folder selection
 // ─────────────────────────────────────────────
-chooseBtn.addEventListener("click", async () => {
+async function chooseFolder() {
   const sel = await open({ directory: true, multiple: false });
   if (typeof sel === "string") addToQueue(sel);
-});
+}
+chooseBtn.addEventListener("click", chooseFolder);
+byId<HTMLButtonElement>("choose2").addEventListener("click", chooseFolder);
 
 function addToQueue(path: string) {
   if (!queue.includes(path)) {
@@ -99,10 +96,14 @@ const queue: string[] = [];
 
 function renderQueue() {
   if (queue.length === 0) {
-    hide(queueSection);
+    queueSection.classList.remove("visible");
+    dropEl.classList.remove("has-queue");
     return;
   }
-  show(queueSection);
+  queueSection.classList.remove("hidden");
+  // rAF so transition plays after display:block kicks in
+  requestAnimationFrame(() => queueSection.classList.add("visible"));
+  dropEl.classList.add("has-queue");
   queueList.innerHTML = queue.map((p, i) =>
     `<li data-idx="${i}">
       <span class="queue-item-icon">📁</span>
@@ -399,6 +400,24 @@ async function doScan(path: string) {
 libSearch.addEventListener("input", filterAndRender);
 libFormat.addEventListener("change", filterAndRender);
 
+// ── Column sorting ──
+const SORT_KEYS: (keyof SampleEntry)[] = ["filename", "ext", "duration", "sample_rate", "channels", "folder"];
+let sortCol: keyof SampleEntry = "filename";
+let sortDir = 1;
+
+const libThead = libTbody.closest("table")!.querySelector("thead tr")!;
+libThead.querySelectorAll<HTMLTableCellElement>("th").forEach((th, i) => {
+  if (i >= SORT_KEYS.length) return;
+  th.dataset["col"] = SORT_KEYS[i];
+  th.addEventListener("click", () => {
+    const col = SORT_KEYS[i];
+    if (sortCol === col) { sortDir *= -1; } else { sortCol = col; sortDir = 1; }
+    libThead.querySelectorAll("th").forEach(t => t.removeAttribute("data-sort"));
+    th.dataset["sort"] = sortDir > 0 ? "asc" : "desc";
+    filterAndRender();
+  });
+});
+
 function filterAndRender() {
   const q   = libSearch.value.toLowerCase();
   const fmt = libFormat.value.toLowerCase();
@@ -409,7 +428,16 @@ function filterAndRender() {
     return matchQ && matchFmt;
   });
 
-  libCount.textContent = `${filteredSamples.length.toLocaleString()} / ${allSamples.length.toLocaleString()} samples`;
+  filteredSamples.sort((a, b) => {
+    const av = a[sortCol], bv = b[sortCol];
+    if (typeof av === "number" && typeof bv === "number") return (av - bv) * sortDir;
+    return String(av).localeCompare(String(bv)) * sortDir;
+  });
+
+  const showing = Math.min(filteredSamples.length, 500);
+  libCount.textContent = showing < filteredSamples.length
+    ? `showing ${showing.toLocaleString()} of ${filteredSamples.length.toLocaleString()} (${allSamples.length.toLocaleString()} total)`
+    : `${filteredSamples.length.toLocaleString()} / ${allSamples.length.toLocaleString()} samples`;
 
   if (filteredSamples.length === 0) {
     libTbody.innerHTML = "";

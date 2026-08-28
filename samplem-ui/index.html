@@ -21,43 +21,40 @@
     <!-- ══════════════ CONVERT TAB ══════════════ -->
     <div id="tab-convert" class="tab-content">
 
-      <!-- Drop zone — shrinks when running -->
+      <!-- Drop zone — shrinks when running, queue renders inside when populated -->
       <div id="drop" class="drop-zone">
+        <div class="drop-halftone"></div>
         <div class="drop-hero">
-          <div class="drop-icon">⬇</div>
+          <div class="drop-icon">
+            <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="6" y="20" width="36" height="22" rx="4" stroke="currentColor" stroke-width="2" fill="none"/>
+              <path d="M16 8h6l4 4h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <line x1="24" y1="27" x2="24" y2="36" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <polyline points="19,32 24,37 29,32" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
           <div class="drop-title">Drop your sample folder here</div>
           <div class="drop-sub">or</div>
           <button id="choose" class="btn-secondary">Choose folder…</button>
+          <input id="folder" type="text" placeholder="/path/to/folder" />
         </div>
-        <input id="folder" type="text" placeholder="/path/to/folder" />
-      </div>
 
-      <!-- Queue (multiple folders) -->
-      <div id="queue-section" class="queue-section hidden">
-        <div class="queue-header">
-          <span class="queue-title">Queue</span>
-          <button id="queue-clear" class="btn-ghost">Clear all</button>
+        <!-- Queue lives inside the drop zone so it's always visible -->
+        <div id="queue-section" class="queue-section hidden">
+          <div class="queue-header">
+            <div class="queue-drop-hint">Drop more folders to add to queue</div>
+            <div class="queue-header-right">
+              <button id="choose2" class="btn-ghost">+ Add folder</button>
+              <button id="queue-clear" class="btn-ghost">Clear all</button>
+            </div>
+          </div>
+          <ul id="queue-list" class="queue-list"></ul>
         </div>
-        <ul id="queue-list" class="queue-list"></ul>
       </div>
 
       <!-- Options + Run -->
       <div class="options-panel">
         <div class="opts-row">
-          <!-- Hardware profile -->
-          <label class="select-label">
-            <div class="opt-text">
-              <span class="opt-name">Profile</span>
-              <span class="opt-desc">Preset for target device</span>
-            </div>
-            <select id="profile">
-              <option value="generic">Generic</option>
-              <option value="octatrack">Octatrack</option>
-              <option value="mpc">MPC</option>
-              <option value="sp404">SP-404</option>
-            </select>
-          </label>
-
           <label class="toggle-label">
             <input id="normalize" type="checkbox" checked />
             <div class="opt-text">
@@ -73,15 +70,13 @@
             </div>
           </label>
           <label class="select-label">
-            <div class="opt-text">
-              <span class="opt-name">Layout</span>
-              <span class="opt-desc">Output folder organization</span>
-            </div>
+            <span class="opt-name">Layout</span>
             <select id="layout">
               <option value="keep">Keep subfolders</option>
               <option value="flat-prefix">Flat + prefix</option>
               <option value="flat" selected>Flat</option>
             </select>
+            <span id="layout-desc" class="opt-dynamic-desc"></span>
           </label>
         </div>
         <button id="run" class="btn-primary">Run</button>
