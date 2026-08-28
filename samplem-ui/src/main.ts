@@ -56,16 +56,103 @@ document.querySelectorAll<HTMLButtonElement>(".tab").forEach(btn => {
     document.querySelectorAll<HTMLDivElement>(".tab-content").forEach(tc => {
       tc.id === `tab-${target}` ? show(tc) : hide(tc);
     });
+    // Library: clientHeight was 0 while hidden — recompute after show
+    if (target === "library" && filteredSamples.length) {
+      requestAnimationFrame(() => vsRender());
+    }
   });
 });
+
+// ─────────────────────────────────────────────
+//  Halftone — mouse-reactive blobs
+// ─────────────────────────────────────────────
+interface HtBlob {
+  x: number; y: number;
+  tx: number; ty: number;
+  lag: number;
+  ox: number; oy: number;
+  phase: number;
+  rx: number; ry: number;
+  baseRx: number; baseRy: number;
+}
+
+const _htBlobs: HtBlob[] = [
+  { x:.12, y:.30, tx:.12, ty:.30, lag:.038, ox: .00, oy: .00, phase:0.0, rx:65, ry:58, baseRx:65, baseRy:58 },
+  { x:.82, y:.20, tx:.82, ty:.20, lag:.024, ox: .18, oy:-.12, phase:1.4, rx:52, ry:58, baseRx:52, baseRy:58 },
+  { x:.50, y:.60, tx:.50, ty:.60, lag:.065, ox:-.22, oy: .17, phase:2.8, rx:35, ry:28, baseRx:35, baseRy:28 },
+  { x:.30, y:.80, tx:.30, ty:.80, lag:.052, ox: .12, oy: .22, phase:4.1, rx:24, ry:22, baseRx:24, baseRy:22 },
+  { x:.70, y:.40, tx:.70, ty:.40, lag:.031, ox:-.10, oy:-.24, phase:5.6, rx:14, ry:18, baseRx:14, baseRy:18 },
+];
+
+const _htEl = document.querySelector<HTMLElement>(".drop-halftone");
+let _htMouseX = -1, _htMouseY = -1;
+let _htT0 = 0;
+
+function _htIdleTarget(ts: number, i: number): [number, number] {
+  const speeds  = [0.21, 0.17, 0.29, 0.19, 0.25];
+  const centers = [[0.25, 0.35], [0.72, 0.25], [0.45, 0.65], [0.28, 0.75], [0.68, 0.42]];
+  const radii   = [[0.20, 0.15], [0.18, 0.14], [0.22, 0.18], [0.15, 0.12], [0.19, 0.13]];
+  const b = _htBlobs[i];
+  const [cx, cy] = centers[i];
+  const [rx, ry] = radii[i];
+  return [
+    cx + rx * Math.cos(ts * speeds[i] + b.phase),
+    cy + ry * Math.sin(ts * speeds[i] * 0.77 + b.phase + 1.05),
+  ];
+}
+
+function _htTick(now: number) {
+  if (_htT0 === 0) _htT0 = now;
+  const ts = (now - _htT0) * 0.001;
+  const hasM = _htMouseX >= 0;
+  const noiseFreqs = [0.37, 0.53, 0.41, 0.61, 0.47];
+
+  _htBlobs.forEach((b, i) => {
+    if (hasM) {
+      b.tx = _htMouseX + b.ox;
+      b.ty = _htMouseY + b.oy;
+    } else {
+      [b.tx, b.ty] = _htIdleTarget(ts, i);
+    }
+    b.tx = Math.max(0.04, Math.min(0.96, b.tx));
+    b.ty = Math.max(0.04, Math.min(0.96, b.ty));
+    b.x += (b.tx - b.x) * b.lag;
+    b.y += (b.ty - b.y) * b.lag;
+
+    const nf = noiseFreqs[i];
+    b.rx = b.baseRx + 9 * Math.sin(ts * nf + b.phase);
+    b.ry = b.baseRy + 7 * Math.sin(ts * nf * 0.83 + b.phase + 0.9);
+  });
+
+  if (_htEl) {
+    _htBlobs.forEach((b, i) => {
+      const n = i + 1;
+      _htEl.style.setProperty(`--bx${n}`, `${(b.x * 100).toFixed(1)}%`);
+      _htEl.style.setProperty(`--by${n}`, `${(b.y * 100).toFixed(1)}%`);
+      _htEl.style.setProperty(`--brx${n}`, `${b.rx.toFixed(1)}%`);
+      _htEl.style.setProperty(`--bry${n}`, `${b.ry.toFixed(1)}%`);
+    });
+  }
+
+  requestAnimationFrame(_htTick);
+}
+
+dropEl.addEventListener("mousemove", (e: MouseEvent) => {
+  const r = dropEl.getBoundingClientRect();
+  _htMouseX = (e.clientX - r.left) / r.width;
+  _htMouseY = (e.clientY - r.top) / r.height;
+});
+dropEl.addEventListener("mouseleave", () => { _htMouseX = -1; _htMouseY = -1; });
+
+requestAnimationFrame(_htTick);
 
 // ─────────────────────────────────────────────
 //  Layout description
 // ─────────────────────────────────────────────
 const layoutDescs: Record<string, string> = {
-  "keep":        "Output mirrors the original subfolder tree inside SAMPLEM-REPACKED.",
-  "flat-prefix": "All files in one folder, prefixed with their original subfolder name.",
-  "flat":        "All files in one flat folder. Duplicated filenames get a numeric suffix.",
+  "keep":        "Preserves original subfolders",
+  "flat-prefix": "One folder, filenames prefixed by parent",
+  "flat":        "One folder, filenames unchanged",
 };
 
 const layoutDesc = byId<HTMLSpanElement>("layout-desc");
@@ -365,17 +452,35 @@ let allSamples:     SampleEntry[] = [];
 let filteredSamples: SampleEntry[] = [];
 let currentLibRoot  = "";
 
-// Load persisted library on startup
-invoke<SampleEntry[]>("get_library").then(entries => {
-  if (entries.length > 0) {
-    allSamples = entries;
-    currentLibRoot = entries[0]?.folder ?? "";
-    libRootLabel.textContent = currentLibRoot;
+const libEmptyState = byId<HTMLDivElement>("lib-empty-state");
+const libEsChoose   = byId<HTMLButtonElement>("lib-es-choose");
+
+function showLibEmptyState() {
+  show(libEmptyState);
+}
+function hideLibEmptyState() {
+  hide(libEmptyState);
+}
+
+// Load persisted library on startup — root stored in localStorage
+(async () => {
+  const storedRoot = localStorage.getItem("samplem_lib_root") ?? "";
+  if (storedRoot) {
+    currentLibRoot = storedRoot;
+    libRootLabel.textContent = storedRoot;
     show(libRescan);
-    filterAndRender();
-    refreshClassifyBtn();
+    hideLibEmptyState();
+    try {
+      const entries = await invoke<SampleEntry[]>("get_library");
+      if (entries.length > 0) {
+        allSamples = entries;
+        filterAndRender();
+      }
+    } catch {}
+  } else {
+    showLibEmptyState();
   }
-}).catch(() => {});
+})();
 
 // Progress listener
 listen<{ done: number; total: number }>("library-progress", (e) => {
@@ -385,13 +490,23 @@ listen<{ done: number; total: number }>("library-progress", (e) => {
   libScanLabel.textContent = `Scanning… ${done.toLocaleString()} / ${total.toLocaleString()}`;
 });
 
+async function connectLibFolder(path: string) {
+  currentLibRoot = path;
+  localStorage.setItem("samplem_lib_root", path);
+  libRootLabel.textContent = path;
+  show(libRescan);
+  hideLibEmptyState();
+  await doScan(path);
+}
+
 libChooseBtn.addEventListener("click", async () => {
   const sel = await open({ directory: true, multiple: false });
-  if (typeof sel !== "string") return;
-  currentLibRoot = sel;
-  libRootLabel.textContent = sel;
-  show(libRescan);
-  await doScan(sel);
+  if (typeof sel === "string") await connectLibFolder(sel);
+});
+
+libEsChoose.addEventListener("click", async () => {
+  const sel = await open({ directory: true, multiple: false });
+  if (typeof sel === "string") await connectLibFolder(sel);
 });
 
 libRescan.addEventListener("click", async () => {
@@ -477,6 +592,13 @@ libTableWrap.addEventListener("scroll", () => {
   vsScrollTop = libTableWrap.scrollTop;
   vsRender();
 });
+
+// Re-render on resize — debounced so it doesn't fire every pixel
+let _vsResizeTimer = 0;
+new ResizeObserver(() => {
+  clearTimeout(_vsResizeTimer);
+  _vsResizeTimer = window.setTimeout(() => { if (filteredSamples.length) vsRender(); }, 80);
+}).observe(libTableWrap);
 
 function vsRender() {
   if (!filteredSamples.length) return;
@@ -713,52 +835,161 @@ libRestart.addEventListener("click", async () => {
 //  CLASSIFY TAB
 // ═══════════════════════════════════════════════════════════
 
-const classifySource   = byId<HTMLSpanElement>("classify-source");
-const classifyDest     = byId<HTMLSpanElement>("classify-dest");
-const classifyPickSrc  = byId<HTMLButtonElement>("classify-pick-source");
-const classifyPickDest = byId<HTMLButtonElement>("classify-pick-dest");
-const classifyRunBtn   = byId<HTMLButtonElement>("classify-run-btn");
-const classifyStatus   = byId<HTMLSpanElement>("classify-status");
-const classifyChart    = byId<HTMLDivElement>("classify-chart-wrap");
+const classifySource      = byId<HTMLSpanElement>("classify-source");
+const classifyDest        = byId<HTMLSpanElement>("classify-dest");
+const classifyPickSrc     = byId<HTMLButtonElement>("classify-pick-source");
+const classifyPickDest    = byId<HTMLButtonElement>("classify-pick-dest");
+const classifyRunBtn      = byId<HTMLButtonElement>("classify-run-btn");
+const classifyStatus      = byId<HTMLSpanElement>("classify-status");
+const classifyCatList     = byId<HTMLDivElement>("classify-cat-list");
+const classifyProgressWrap = byId<HTMLDivElement>("classify-progress-wrap");
+const classifyProgressBar  = byId<HTMLDivElement>("classify-progress-bar");
+const classifyProgressLbl  = byId<HTMLSpanElement>("classify-progress-label");
+const classifySummary      = byId<HTMLDivElement>("classify-summary");
+
+interface CatEntry { count: number; files: { name: string; path: string }[]; }
 
 let classifySrcPath  = "";
 let classifyDestPath = "";
+let classifyCounts: Record<string, CatEntry> = {};
+const classifyExcluded = new Set<string>();
 
-// Pre-fill source from library root when switching to Classify tab
+function refreshClassifyBtn() { /* no-op */ }
+
+const CATEGORY_COLORS: Record<string, string> = {
+  Kick: "#e05c5c", Snare: "#e08c3c", HiHat: "#d4c43a", Clap: "#7acc54",
+  Tom: "#3abfd4", Perc: "#5c9ce0", Bass: "#9c5ce0", FX: "#d45cb8",
+  Vocal: "#e05c8c", Pad: "#5ce0b8", Synth: "#5c8ce0", Loop: "#b8e05c",
+  Other: "#888", Unknown: "#666",
+};
+
+// Pre-fill source from library root when switching to Classify tab (no auto-inference)
 document.querySelectorAll<HTMLButtonElement>(".tab").forEach(btn => {
   btn.addEventListener("click", () => {
     if (btn.dataset["tab"] === "classify" && currentLibRoot && !classifySrcPath) {
-      classifySrcPath = currentLibRoot;
-      classifySource.textContent = currentLibRoot;
-      classifySource.classList.remove("classify-path-muted");
-      doClassifyPreview();
+      setClassifySource(currentLibRoot);
     }
   });
 });
 
-function refreshClassifyBtn() { /* no-op: classify lives in its own tab now */ }
+const classifyPreviewBtn = byId<HTMLButtonElement>("classify-preview-btn");
+
+function setClassifySource(path: string) {
+  classifySrcPath = path;
+  classifySource.textContent = path;
+  classifySource.classList.remove("classify-path-muted");
+  // Auto-suggest destination
+  if (!classifyDestPath) {
+    const suggested = path.replace(/\/+$/, "") + "_classified";
+    classifyDestPath = suggested;
+    classifyDest.textContent = suggested;
+    classifyDest.classList.remove("classify-path-muted");
+  }
+  classifyPreviewBtn.disabled = false;
+  classifyRunBtn.disabled = false;
+  // Don't auto-preview — user triggers it explicitly
+  classifyCatList.innerHTML = `<div class="classify-cat-empty">Click <strong>Preview categories</strong> to scan, or <strong>Copy &amp; Sort</strong> to sort directly.</div>`;
+}
+
+interface PreviewResult {
+  categories: Record<string, CatEntry>;
+  sampled: boolean;
+  full_total: number;
+  scanned: number;
+}
 
 async function doClassifyPreview() {
   if (!classifySrcPath) return;
-  classifyChart.innerHTML = `<span class="classify-chart-hint">Scanning…</span>`;
+  classifyCatList.innerHTML = `<div class="classify-cat-empty">Scanning…</div>`;
   classifyRunBtn.disabled = true;
   classifyStatus.textContent = "";
+  hide(classifySummary);
   try {
-    const counts = await invoke<Record<string, number>>("classify_preview", { path: classifySrcPath });
-    renderClassifyChart(counts);
+    const result = await invoke<PreviewResult>("classify_preview", { path: classifySrcPath });
+    classifyCounts = result.categories;
+    renderCategoryList(result.categories, result.sampled, result.full_total);
     if (classifyDestPath) classifyRunBtn.disabled = false;
   } catch (e) {
-    classifyChart.innerHTML = `<span class="classify-chart-hint classify-error">Error: ${String(e)}</span>`;
+    classifyCatList.innerHTML = `<div class="classify-cat-empty classify-error">Error: ${String(e)}</div>`;
   }
 }
 
+function renderCategoryList(data: Record<string, CatEntry>, sampled = false, fullTotal = 0) {
+  const entries = Object.entries(data).sort((a, b) => b[1].count - a[1].count);
+  if (!entries.length) {
+    classifyCatList.innerHTML = `<div class="classify-cat-empty">No samples found.</div>`;
+    return;
+  }
+  const scanned = entries.reduce((s, [, v]) => s + v.count, 0);
+  const max = entries[0][1].count;
+  const sampledNote = sampled
+    ? `<span class="classify-sampled-note">Estimated from ${scanned.toLocaleString()} of ${fullTotal.toLocaleString()} samples</span>`
+    : `<span class="classify-cat-header-total">${scanned.toLocaleString()} samples</span>`;
+
+  const header = `<div class="classify-cat-header">
+    <span>${entries.length} categories detected</span>
+    ${sampledNote}
+  </div>`;
+
+  const rows = entries.map(([cat, v]) => {
+    const color   = CATEGORY_COLORS[cat] ?? "#2ddb76";
+    const barPct  = Math.max(2, Math.round((v.count / max) * 100));
+    const checked = !classifyExcluded.has(cat) ? "checked" : "";
+    const excCls  = classifyExcluded.has(cat) ? " excluded" : "";
+    // preview: first 3 filenames, folder count hint
+    const preview = v.files.slice(0, 3).map(f => f.name).join(", ") + (v.files.length > 3 ? "…" : "");
+    // expanded list (all files)
+    const fileRows = v.files.map(f => {
+      const folder = f.path.replace(/\/[^/]+$/, "");
+      return `<div class="classify-cat-file">
+        <span class="classify-cat-fname">${f.name}</span>
+        <span class="classify-cat-fpath">${folder}</span>
+      </div>`;
+    }).join("");
+
+    return `<div class="classify-cat-row" data-cat="${cat}">
+      <div class="classify-cat-main${excCls}">
+        <input type="checkbox" class="classify-cat-check" data-cat="${cat}" ${checked}>
+        <span class="classify-cat-dot" style="background:${color}"></span>
+        <span class="classify-cat-name">${cat}</span>
+        <span class="classify-cat-count">${v.count}</span>
+        <div class="classify-cat-bar-wrap">
+          <div class="classify-cat-bar" style="width:${barPct}%;background:${color}44"></div>
+        </div>
+        <span class="classify-cat-preview" title="${preview}">${preview}</span>
+      </div>
+      <div class="classify-cat-expand">${fileRows}</div>
+    </div>`;
+  }).join("");
+
+  classifyCatList.innerHTML = header + rows;
+
+  // Checkbox toggles
+  classifyCatList.querySelectorAll<HTMLInputElement>(".classify-cat-check").forEach(cb => {
+    cb.addEventListener("change", (e) => {
+      e.stopPropagation();
+      const cat = cb.dataset["cat"]!;
+      if (cb.checked) { classifyExcluded.delete(cat); } else { classifyExcluded.add(cat); }
+      const main = cb.closest(".classify-cat-main");
+      if (main) main.classList.toggle("excluded", !cb.checked);
+    });
+  });
+
+  // Row click = expand/collapse file list
+  classifyCatList.querySelectorAll<HTMLDivElement>(".classify-cat-main").forEach(main => {
+    main.addEventListener("click", (e) => {
+      if ((e.target as HTMLElement).classList.contains("classify-cat-check")) return;
+      const row = main.closest<HTMLDivElement>(".classify-cat-row")!;
+      row.classList.toggle("open");
+    });
+  });
+}
+
+classifyPreviewBtn.addEventListener("click", doClassifyPreview);
+
 classifyPickSrc.addEventListener("click", async () => {
   const sel = await open({ directory: true, multiple: false });
-  if (typeof sel !== "string") return;
-  classifySrcPath = sel;
-  classifySource.textContent = sel;
-  classifySource.classList.remove("classify-path-muted");
-  doClassifyPreview();
+  if (typeof sel === "string") setClassifySource(sel);
 });
 
 classifyPickDest.addEventListener("click", async () => {
@@ -774,58 +1005,79 @@ classifyPickDest.addEventListener("click", async () => {
 
 classifyRunBtn.addEventListener("click", async () => {
   if (!classifySrcPath || !classifyDestPath) return;
+  const hasCounts = Object.keys(classifyCounts).length > 0;
+  const included = hasCounts
+    ? Object.keys(classifyCounts).filter(c => !classifyExcluded.has(c))
+    : [];
+  if (hasCounts && !included.length) { classifyStatus.textContent = "⚠ Select at least one category."; return; }
+  const totalExpected = hasCounts
+    ? included.reduce((s, c) => s + (classifyCounts[c]?.count ?? 0), 0)
+    : 0;
   classifyRunBtn.disabled = true;
-  classifyStatus.textContent = "Copying…";
-  let unlisten: (() => void) | undefined;
+  classifyPreviewBtn.disabled = true;
+  classifyStatus.textContent = "";
+  show(classifyProgressWrap);
+  classifyProgressBar.style.width = "0%";
+  classifyProgressLbl.textContent = "Starting…";
+
+  let unlistenProgress: (() => void) | undefined;
+  let unlistenTotal: (() => void) | undefined;
+  let realTotal = totalExpected;
+
   try {
-    unlisten = await listen<string>("classify-log", (e) => {
-      classifyStatus.textContent = e.payload.replace(/^[✅❌•]\s*/, "");
+    unlistenTotal = await listen<number>("classify-total", (e) => {
+      realTotal = e.payload;
+      classifyProgressLbl.textContent = `0 / ${realTotal}`;
     });
-    await invoke("run_classify", { source: classifySrcPath, dest: classifyDestPath });
-    classifyStatus.textContent = "✅ Done — files copied to destination.";
+    unlistenProgress = await listen<{ done: number; total: number }>("classify-progress", (e) => {
+      const { done, total } = e.payload;
+      if (total > 0) realTotal = total;
+      const pct = Math.min(99, Math.round((done / realTotal) * 100));
+      classifyProgressBar.style.width = `${pct}%`;
+      classifyProgressLbl.textContent = `${done} / ${realTotal}`;
+    });
+    await invoke("run_classify", {
+      source:  classifySrcPath,
+      dest:    classifyDestPath,
+      include: included.length ? included.join(",") : null,
+    });
+    classifyProgressBar.style.width = "100%";
+    classifyProgressLbl.textContent = `${realTotal} / ${realTotal}`;
+    await new Promise(r => setTimeout(r, 300));
+    hide(classifyProgressWrap);
+    renderClassifySummary(included.length ? included : Object.keys(classifyCounts), realTotal);
   } catch (e) {
     classifyStatus.textContent = `❌ ${String(e)}`;
+    hide(classifyProgressWrap);
   } finally {
-    if (unlisten) unlisten();
+    unlistenProgress?.();
+    unlistenTotal?.();
     classifyRunBtn.disabled = false;
+    classifyPreviewBtn.disabled = false;
   }
 });
 
-const CATEGORY_COLORS: Record<string, string> = {
-  Kick: "#e05c5c", Snare: "#e08c3c", HiHat: "#d4c43a", Clap: "#7acc54",
-  Tom: "#3abfd4", Perc: "#5c9ce0", Bass: "#9c5ce0", FX: "#d45cb8",
-  Vocal: "#e05c8c", Pad: "#5ce0b8", Synth: "#5c8ce0", Loop: "#b8e05c",
-  Other: "#888", Unknown: "#666",
-};
-
-function renderClassifyChart(counts: Record<string, number>) {
-  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-  if (!entries.length) { classifyChart.innerHTML = `<span class="classify-chart-hint">No samples found.</span>`; return; }
-  const total = entries.reduce((s, [, n]) => s + n, 0);
-  const max   = entries[0][1];
-  const ROW_H = 28, LABEL_W = 62, BAR_MAX = 200, COUNT_W = 44;
-  const SVG_W = LABEL_W + BAR_MAX + COUNT_W + 8;
-  const SVG_H = entries.length * ROW_H + 4;
-
-  const rows = entries.map(([cat, n], i) => {
-    const y    = i * ROW_H + ROW_H / 2;
-    const barW = Math.max(2, Math.round((n / max) * BAR_MAX));
-    const color = CATEGORY_COLORS[cat] ?? "#2ddb76";
-    const pct   = ((n / total) * 100).toFixed(0);
-    return `
-      <text x="${LABEL_W - 6}" y="${y + 5}" text-anchor="end" class="cls-label">${cat}</text>
-      <rect x="${LABEL_W}" y="${y - 9}" width="${barW}" height="18" rx="3" fill="${color}" opacity="0.82"/>
-      <text x="${LABEL_W + barW + 5}" y="${y + 5}" class="cls-count">${n} <tspan class="cls-pct">${pct}%</tspan></text>`;
+function renderClassifySummary(included: string[], total: number) {
+  const chips = included.map(c => {
+    const n = classifyCounts[c]?.count ?? 0;
+    const color = CATEGORY_COLORS[c] ?? "#888";
+    return `<span class="classify-summary-chip" style="border-left:3px solid ${color}">${c} ${n}</span>`;
   }).join("");
+  classifySummary.innerHTML = `
+    <div class="classify-summary-title">✓ ${total.toLocaleString()} files copied</div>
+    <div class="classify-summary-chips">${chips}</div>
+    <div class="classify-summary-actions">
+      <button class="btn-secondary" id="classify-reveal-dest">Show in Finder</button>
+      <button class="btn-ghost" id="classify-again">Classify again</button>
+    </div>`;
+  show(classifySummary);
+  classifyCatList.innerHTML = "";
 
-  classifyChart.innerHTML = `
-    <div class="classify-chart-total">${total.toLocaleString()} samples total</div>
-    <svg viewBox="0 0 ${SVG_W} ${SVG_H}" width="${SVG_W}" height="${SVG_H}" class="classify-chart-svg">
-      <style>
-        .cls-label { font: 11px system-ui; fill: var(--text-muted); }
-        .cls-count  { font: 11px system-ui; fill: var(--text); }
-        .cls-pct    { fill: var(--text-muted); font-size: 10px; }
-      </style>
-      ${rows}
-    </svg>`;
+  byId<HTMLButtonElement>("classify-reveal-dest").addEventListener("click", () => {
+    revealItemInDir(classifyDestPath).catch(() => {});
+  });
+  byId<HTMLButtonElement>("classify-again").addEventListener("click", () => {
+    hide(classifySummary);
+    doClassifyPreview();
+  });
 }

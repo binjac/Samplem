@@ -56,7 +56,7 @@
       <div class="options-panel">
         <div class="opts-row">
           <label class="toggle-label">
-            <input id="normalize" type="checkbox" checked />
+            <input id="normalize" type="checkbox" />
             <div class="opt-text">
               <span class="opt-name">Normalize</span>
               <span class="opt-desc">Boost or reduce each file's peak level to 0 dBFS</span>
@@ -157,6 +157,18 @@
         <button id="lib-rescan" class="btn-ghost hidden">Rescan</button>
       </div>
 
+      <div id="lib-empty-state" class="lib-empty-state hidden">
+        <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+          <rect x="6" y="20" width="36" height="22" rx="4" stroke="currentColor" stroke-width="2" fill="none"/>
+          <path d="M16 8h6l4 4h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <line x1="24" y1="27" x2="24" y2="36" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <polyline points="19,32 24,37 29,32" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <div class="lib-es-title">No library connected</div>
+        <div class="lib-es-sub">Connect a folder to browse and play your samples</div>
+        <button id="lib-es-choose" class="btn-secondary">Connect folder…</button>
+      </div>
+
       <div id="lib-scanning" class="lib-scanning hidden">
         <div class="lib-scan-track"><div id="lib-scan-bar" class="lib-scan-fill" style="width:0%"></div></div>
         <span id="lib-scan-label">Scanning…</span>
@@ -207,40 +219,51 @@
     <!-- ══════════════ CLASSIFY TAB ══════════════ -->
     <div id="tab-classify" class="tab-content hidden">
 
-      <div class="classify-tab-body">
-        <div class="classify-col classify-left">
+      <div class="classify-wrapper">
 
-          <div class="classify-field">
-            <label class="classify-label">Source folder</label>
+        <!-- Top bar: pickers + action -->
+        <div class="classify-topbar">
+          <div class="classify-picker-group">
+            <span class="classify-picker-label">Source</span>
             <div class="classify-dest-row">
               <span id="classify-source" class="classify-path classify-path-muted">Choose a folder…</span>
               <button id="classify-pick-source" class="btn-ghost">Browse…</button>
             </div>
           </div>
-
-          <div class="classify-field">
-            <label class="classify-label">Destination folder</label>
+          <div class="classify-topbar-sep">→</div>
+          <div class="classify-picker-group">
+            <span class="classify-picker-label">Destination</span>
             <div class="classify-dest-row">
-              <span id="classify-dest" class="classify-path classify-path-muted">Choose a folder…</span>
+              <span id="classify-dest" class="classify-path classify-path-muted">Auto-filled when source is chosen</span>
               <button id="classify-pick-dest" class="btn-ghost">Browse…</button>
             </div>
           </div>
-
-          <p class="classify-notice">
-            Copies files into category subfolders (Kick, Snare, HiHat…) — originals are never modified.
-          </p>
-
-          <div class="classify-actions">
-            <button id="classify-run-btn" class="btn-primary" disabled>Copy &amp; Sort</button>
+          <div class="classify-topbar-action">
+            <div class="classify-action-row">
+              <button id="classify-preview-btn" class="btn-secondary classify-preview-btn" disabled>
+                <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="5.5" cy="5.5" r="3.5"/><line x1="8.2" y1="8.2" x2="12" y2="12"/></svg>
+                Preview categories
+              </button>
+              <button id="classify-run-btn" class="btn-primary" disabled>Copy &amp; Sort</button>
+            </div>
             <span id="classify-status" class="classify-status"></span>
           </div>
+        </div>
 
+        <!-- Progress bar (hidden until running) -->
+        <div id="classify-progress-wrap" class="classify-progress-wrap hidden">
+          <div class="progress-bar-track" style="flex:1"><div id="classify-progress-bar" class="progress-bar-fill" style="width:0%"></div></div>
+          <span id="classify-progress-label" class="classify-progress-label"></span>
         </div>
-        <div class="classify-col classify-right">
-          <div id="classify-chart-wrap" class="classify-chart-wrap">
-            <span class="classify-chart-hint">Pick a source folder to preview categories.</span>
-          </div>
+
+        <!-- Category list -->
+        <div id="classify-cat-list" class="classify-cat-list">
+          <div class="classify-cat-empty">Pick a source folder to preview categories.</div>
         </div>
+
+        <!-- Post-sort summary -->
+        <div id="classify-summary" class="classify-summary hidden"></div>
+
       </div>
 
     </div><!-- /tab-classify -->
