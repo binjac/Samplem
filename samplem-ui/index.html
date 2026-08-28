@@ -15,13 +15,14 @@
       <nav class="tabs" role="tablist">
         <button class="tab active" data-tab="convert">Convert</button>
         <button class="tab" data-tab="library">Library</button>
+        <button class="tab" data-tab="classify">Classify</button>
       </nav>
     </header>
 
     <!-- ══════════════ CONVERT TAB ══════════════ -->
     <div id="tab-convert" class="tab-content">
 
-      <!-- Drop zone — shrinks when running, queue renders inside when populated -->
+      <!-- Drop zone -->
       <div id="drop" class="drop-zone">
         <div class="drop-halftone"></div>
         <div class="drop-hero">
@@ -39,7 +40,6 @@
           <input id="folder" type="text" placeholder="/path/to/folder" />
         </div>
 
-        <!-- Queue lives inside the drop zone so it's always visible -->
         <div id="queue-section" class="queue-section hidden">
           <div class="queue-header">
             <div class="queue-drop-hint">Drop more folders to add to queue</div>
@@ -77,6 +77,13 @@
               <option value="flat" selected>Flat</option>
             </select>
             <span id="layout-desc" class="opt-dynamic-desc"></span>
+          </label>
+          <label class="toggle-label">
+            <input id="auto-classify" type="checkbox" />
+            <div class="opt-text">
+              <span class="opt-name">Classify output</span>
+              <span class="opt-desc">Sort into Kick / Snare / HiHat… subfolders after converting</span>
+            </div>
           </label>
         </div>
         <button id="run" class="btn-primary">Run</button>
@@ -116,7 +123,9 @@
         </div>
         <div class="done-right">
           <code id="stat-path" class="stat-path"></code>
-          <button id="reveal-btn" class="btn-reveal">Show in Finder</button>
+          <div class="done-actions">
+            <button id="reveal-btn" class="btn-reveal">Show in Finder</button>
+          </div>
         </div>
       </div>
 
@@ -162,6 +171,8 @@
               <th>Duration</th>
               <th>SR</th>
               <th>Ch</th>
+              <th>BPM</th>
+              <th>Key</th>
               <th>Folder</th>
               <th></th>
             </tr>
@@ -173,7 +184,18 @@
 
       <!-- Waveform + player -->
       <div id="lib-player" class="lib-player hidden">
-        <button id="lib-stop" class="btn-cancel lib-stop-btn">■</button>
+        <button id="lib-restart" class="btn-cancel lib-ctrl-btn" title="Restart from beginning">
+          <svg width="14" height="12" viewBox="0 0 14 12" fill="none">
+            <line x1="2" y1="1" x2="2" y2="11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <polygon points="13,1 5,6 13,11" fill="currentColor"/>
+          </svg>
+        </button>
+        <button id="lib-playpause" class="btn-cancel lib-ctrl-btn" title="Play / Pause">
+          <svg width="10" height="12" viewBox="0 0 10 12"><polygon points="0,0 10,6 0,12" fill="currentColor"/></svg>
+        </button>
+        <button id="lib-stop" class="btn-cancel lib-ctrl-btn" title="Stop">
+          <svg width="10" height="10" viewBox="0 0 10 10"><rect width="10" height="10" rx="1.5" fill="currentColor"/></svg>
+        </button>
         <div class="lib-wave-wrap">
           <svg id="lib-waveform" class="lib-waveform" viewBox="0 0 400 40" preserveAspectRatio="none"></svg>
         </div>
@@ -181,6 +203,47 @@
       </div>
 
     </div><!-- /tab-library -->
+
+    <!-- ══════════════ CLASSIFY TAB ══════════════ -->
+    <div id="tab-classify" class="tab-content hidden">
+
+      <div class="classify-tab-body">
+        <div class="classify-col classify-left">
+
+          <div class="classify-field">
+            <label class="classify-label">Source folder</label>
+            <div class="classify-dest-row">
+              <span id="classify-source" class="classify-path classify-path-muted">Choose a folder…</span>
+              <button id="classify-pick-source" class="btn-ghost">Browse…</button>
+            </div>
+          </div>
+
+          <div class="classify-field">
+            <label class="classify-label">Destination folder</label>
+            <div class="classify-dest-row">
+              <span id="classify-dest" class="classify-path classify-path-muted">Choose a folder…</span>
+              <button id="classify-pick-dest" class="btn-ghost">Browse…</button>
+            </div>
+          </div>
+
+          <p class="classify-notice">
+            Copies files into category subfolders (Kick, Snare, HiHat…) — originals are never modified.
+          </p>
+
+          <div class="classify-actions">
+            <button id="classify-run-btn" class="btn-primary" disabled>Copy &amp; Sort</button>
+            <span id="classify-status" class="classify-status"></span>
+          </div>
+
+        </div>
+        <div class="classify-col classify-right">
+          <div id="classify-chart-wrap" class="classify-chart-wrap">
+            <span class="classify-chart-hint">Pick a source folder to preview categories.</span>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /tab-classify -->
 
     <script type="module" src="/src/main.ts"></script>
   </body>
