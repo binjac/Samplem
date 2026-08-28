@@ -7,6 +7,8 @@ use std::{
   process::{Command, Stdio},
   sync::Mutex,
 };
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use tauri::{AppHandle, Emitter, State};
 
 // ═══════════════════════════════════════════════
@@ -60,6 +62,8 @@ async fn run_samplem(
     .arg("--layout").arg(&layout)
     .stdout(Stdio::piped())
     .stderr(Stdio::piped());
+  #[cfg(unix)]
+  cmd.process_group(0);
 
   let mut child = cmd.spawn().map_err(|e| e.to_string())?;
   *pid_state.0.lock().unwrap() = Some(child.id());
@@ -89,11 +93,10 @@ async fn run_samplem(
 #[tauri::command]
 fn cancel_samplem(pid_state: State<'_, ActivePid>) -> Result<(), String> {
   if let Some(pid) = *pid_state.0.lock().unwrap() {
-    Command::new("kill")
-      .args(["-TERM", &format!("-{}", pid)])
-      .status()
-      .or_else(|_| Command::new("kill").args([&pid.to_string()]).status())
-      .map_err(|e| e.to_string())?;
+    // Kill the whole process group (catches sox children too)
+    let _ = Command::new("kill").args(["-TERM", &format!("-{}", pid)]).status();
+    // Also kill the process itself in case group kill failed
+    let _ = Command::new("kill").args(["-TERM", &pid.to_string()]).status();
   }
   Ok(())
 }
@@ -422,8 +425,8 @@ fn classify_cmd(extra_args: &[&str]) -> Result<std::process::Command, String> {
 }
 
 #[tauri::command]
-fn classify_preview(path: String) -> Result<std::collections::HashMap<String, u32>, String> {
-  let out = classify_cmd(&[&path, "--json-summary"])?
+fn classify_preview(path: String) -> Result<serde_json::Value, String> {
+  let out = classify_cmd(&[&path, "--json-summary", "--max-preview", "800"])?
     .output().map_err(|e| e.to_string())?;
   if !out.status.success() {
     return Err(String::from_utf8_lossy(&out.stderr).to_string());
@@ -433,15 +436,35 @@ fn classify_preview(path: String) -> Result<std::collections::HashMap<String, u3
 }
 
 #[tauri::command]
-async fn run_classify(app: AppHandle, source: String, dest: String) -> Result<(), String> {
-  let mut child = classify_cmd(&[&source, "--copy-into", &dest])?
+async fn run_classify(app: AppHandle, source: String, dest: String, include: Option<String>) -> Result<(), String> {
+  let mut args: Vec<String> = vec![source.clone(), "--copy-into".to_string(), dest.clone()];
+  if let Some(inc) = include {
+    args.push("--include".to_string());
+    args.push(inc);
+  }
+  let str_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+  let mut child = classify_cmd(&str_refs)?
     .stdout(Stdio::piped()).stderr(Stdio::piped())
     .spawn().map_err(|e| e.to_string())?;
   if let Some(stdout) = child.stdout.take() {
     let a = app.clone();
     std::thread::spawn(move || {
       for line in BufReader::new(stdout).lines().flatten() {
-        let _ = a.emit("classify-log", line);
+        if let Some(rest) = line.strip_prefix("CLASSIFY_TOTAL:") {
+          if let Ok(n) = rest.trim().parse::<u32>() {
+            let _ = a.emit("classify-total", n);
+          }
+        } else if let Some(rest) = line.strip_prefix("CLASSIFY_PROGRESS:") {
+          // "done/total"
+          let mut parts = rest.trim().splitn(2, '/');
+          if let (Some(d), Some(t)) = (parts.next(), parts.next()) {
+            if let (Ok(done), Ok(total)) = (d.parse::<u32>(), t.parse::<u32>()) {
+              let _ = a.emit("classify-progress", serde_json::json!({"done": done, "total": total}));
+            }
+          }
+        } else {
+          let _ = a.emit("classify-log", line);
+        }
       }
     });
   }
