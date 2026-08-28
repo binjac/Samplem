@@ -267,14 +267,14 @@ decide_out_dir_and_prefix() {
   print -r -- "$outd|$prefix"
 }
 
-# Only run sox if FX were requested or input is AIF (needs conversion); otherwise just copy
+# Only run sox if FX were requested or input needs conversion (AIF, FLAC); otherwise just copy
 copy_or_process() {
   local in="$1" out="$2"
-  local is_aif=false
-  [[ "${in:l}" == *.aif || "${in:l}" == *.aiff ]] && is_aif=true
+  local needs_convert=false
+  [[ "${in:l}" == *.aif || "${in:l}" == *.aiff || "${in:l}" == *.flac ]] && needs_convert=true
 
-  if (( ${#SOX_FX[@]} )) || $is_aif; then
-    sox -V1 -G "$in" "$out" "${SOX_FX[@]}" || { $is_aif || cp -p "$in" "$out"; }
+  if (( ${#SOX_FX[@]} )) || $needs_convert; then
+    sox -V1 -G "$in" "$out" "${SOX_FX[@]}" || { $needs_convert || cp -p "$in" "$out"; }
   else
     cp -p "$in" "$out"
   fi
@@ -318,7 +318,7 @@ done < <(find "$PACK_PATH" -type f -name "*-L.wav" ! -path "*/SAMPLEM-REPACKED/*
 #  📦  Copy/convert mono WAVs and AIF files
 # ────────────────────────────────────────────────
 typeset -i _total_files _done_files
-_total_files=$(find "$PACK_PATH" -type f \( -name "*.wav" -o -name "*.aif" -o -name "*.aiff" \) ! -path "*/SAMPLEM-REPACKED/*" | wc -l | tr -d ' ')
+_total_files=$(find "$PACK_PATH" -type f \( -name "*.wav" -o -name "*.aif" -o -name "*.aiff" -o -name "*.flac" \) ! -path "*/SAMPLEM-REPACKED/*" | wc -l | tr -d ' ')
 _done_files=0
 
 while IFS= read -r -d '' F; do
@@ -330,9 +330,9 @@ while IFS= read -r -d '' F; do
   base="$(basename "$F")"
   name_no_ext="${base%.*}"
 
-  # AIF/AIFF → output as .wav
+  # AIF/AIFF/FLAC → output as .wav
   out_base=""
-  if [[ "${F:l}" == *.aif || "${F:l}" == *.aiff ]]; then
+  if [[ "${F:l}" == *.aif || "${F:l}" == *.aiff || "${F:l}" == *.flac ]]; then
     out_base="${name_no_ext}.wav"
   else
     out_base="$base"
@@ -346,7 +346,7 @@ while IFS= read -r -d '' F; do
 
   out_file="$out_dir/${name_prefix}${out_base}"
 
-  if [[ "${F:l}" == *.aif || "${F:l}" == *.aiff ]]; then
+  if [[ "${F:l}" == *.aif || "${F:l}" == *.aiff || "${F:l}" == *.flac ]]; then
     log "Convert :: ${F#$PACK_PATH/} → ${out_file#$OUT_DIR/}"
   else
     log "Copy    :: ${F#$PACK_PATH/} → ${out_file#$OUT_DIR/}"
@@ -355,7 +355,7 @@ while IFS= read -r -d '' F; do
 
   (( ++_done_files ))
   echo "PROGRESS:${_done_files}/${_total_files}"
-done < <(find "$PACK_PATH" -type f \( -name "*.wav" -o -name "*.aif" -o -name "*.aiff" \) ! -path "*/SAMPLEM-REPACKED/*" -print0)
+done < <(find "$PACK_PATH" -type f \( -name "*.wav" -o -name "*.aif" -o -name "*.aiff" -o -name "*.flac" \) ! -path "*/SAMPLEM-REPACKED/*" -print0)
 
 # ────────────────────────────────────────────────
 #  🗂️  CSV Index (global at REPACKED root)

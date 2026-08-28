@@ -167,6 +167,25 @@ fn parse_80bit(b: [u8; 10]) -> f64 {
   if b[0] & 0x80 != 0 { -v } else { v }
 }
 
+fn read_flac_meta(path: &Path) -> Option<(i64, i64, i64, f64)> {
+  let mut f = fs::File::open(path).ok()?;
+  let mut buf = [0u8; 64];
+  f.read_exact(&mut buf).ok()?;
+  if &buf[0..4] != b"fLaC" { return None; }
+  // STREAMINFO block header: byte 4 = type (bit7=last|bits6-0=type), bytes 5-7 = length
+  // type 0 = STREAMINFO; it must be the first block
+  if buf[4] & 0x7f != 0 { return None; }
+  // STREAMINFO data starts at byte 8, 34 bytes total
+  // bytes 8-17 contain the packed sample_rate/channels/bit_depth/total_samples
+  let packed = u64::from_be_bytes(buf[18..26].try_into().ok()?);
+  let sr     = ((packed >> 44) & 0xFFFFF) as i64;
+  let ch     = (((packed >> 41) & 0x7) + 1) as i64;
+  let bd     = (((packed >> 36) & 0x1F) + 1) as i64;
+  let total  = (packed & 0xFFFFFFFFF) as f64;
+  if sr == 0 { return None; }
+  Some((ch, sr, bd, total / sr as f64))
+}
+
 // ═══════════════════════════════════════════════
 //  Library: scan / load / persist
 // ═══════════════════════════════════════════════
@@ -237,6 +256,7 @@ async fn scan_library(app: AppHandle, path: String) -> Result<Vec<SampleEntry>, 
       let (ch, sr, bd, dur) = match ext.as_str() {
         "wav"        => read_wav_meta(file).unwrap_or((0,0,0,0.0)),
         "aif"|"aiff" => read_aif_meta(file).unwrap_or((0,0,0,0.0)),
+        "flac"       => read_flac_meta(file).unwrap_or((0,0,0,0.0)),
         _            => (0,0,0,0.0),
       };
       lib.insert(key.clone(), SampleEntry {
@@ -272,7 +292,6 @@ fn get_library() -> Result<Vec<SampleEntry>, String> {
 
 #[tauri::command]
 fn play_sample(path: String, pb: State<'_, PlaybackPid>) -> Result<(), String> {
-  // Kill previous
   if let Some(pid) = pb.0.lock().unwrap().take() {
     Command::new("kill").args([&pid.to_string()]).status().ok();
   }
@@ -291,19 +310,151 @@ fn stop_playback(pb: State<'_, PlaybackPid>) -> Result<(), String> {
   Ok(())
 }
 
+/// Read a local audio file and return its raw bytes for Web Audio decoding.
+#[tauri::command]
+fn read_file_bytes(path: String) -> Result<Vec<u8>, String> {
+  fs::read(&path).map_err(|e| e.to_string())
+}
+
 // ═══════════════════════════════════════════════
 //  Waveform (downsample via sox → raw PCM)
 // ═══════════════════════════════════════════════
 
 #[tauri::command]
-fn get_waveform(path: String) -> Result<Vec<f32>, String> {
+fn get_waveform(path: String) -> Result<Vec<[f32; 2]>, String> {
+  // Decode to mono 16-bit PCM at a high sample count, then compute min/max per pixel block
   let out = Command::new("sox")
     .args(["-V0", &path,
-           "-t", "raw", "-e", "signed-integer", "-b", "16", "-r", "300", "-c", "1", "-"])
+           "-t", "raw", "-e", "signed-integer", "-b", "16", "-r", "22050", "-c", "1", "-"])
     .output().map_err(|e| e.to_string())?;
-  Ok(out.stdout.chunks_exact(2)
+  let samples: Vec<f32> = out.stdout.chunks_exact(2)
     .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0)
-    .collect())
+    .collect();
+  if samples.is_empty() {
+    return Ok(vec![[0.0, 0.0]; 400]);
+  }
+  const PIXELS: usize = 400;
+  let block = (samples.len() + PIXELS - 1) / PIXELS;
+  let envelope: Vec<[f32; 2]> = (0..PIXELS).map(|i| {
+    let start = i * block;
+    let end   = ((i + 1) * block).min(samples.len());
+    if start >= samples.len() { return [0.0_f32, 0.0_f32]; }
+    let slice = &samples[start..end];
+    let mn = slice.iter().cloned().fold(f32::INFINITY, f32::min);
+    let mx = slice.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    [mn, mx]
+  }).collect();
+  Ok(envelope)
+}
+
+// ═══════════════════════════════════════════════
+//  BPM / Key detection
+// ═══════════════════════════════════════════════
+
+#[tauri::command]
+fn detect_bpm_key(path: String) -> Result<serde_json::Value, String> {
+  let home = std::env::var("HOME").unwrap_or_default();
+  // locate detect.py next to the samplem bin, or fall back to PATH
+  let script = PathBuf::from(&home).join(".local/bin/detect.py");
+  let script_arg = if script.exists() {
+    script.to_string_lossy().to_string()
+  } else {
+    // try same dir as samplem
+    let samplem_bin = std::env::current_exe().ok()
+      .and_then(|e| e.parent().map(|p| p.join("detect.py")));
+    samplem_bin.filter(|p| p.exists())
+      .map(|p| p.to_string_lossy().to_string())
+      .unwrap_or_else(|| "detect.py".to_string())
+  };
+  let search_path = format!("{}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin", home);
+  let out = Command::new("python3")
+    .env("PATH", &search_path)
+    .arg(&script_arg)
+    .arg(&path)
+    .output()
+    .map_err(|e| format!("python3 not found: {}", e))?;
+  let s = String::from_utf8_lossy(&out.stdout);
+  serde_json::from_str(&s).map_err(|e| format!("Bad JSON: {}\nraw: {}", e, s))
+}
+
+// ═══════════════════════════════════════════════
+//  Classify
+// ═══════════════════════════════════════════════
+
+fn classify_search_path() -> String {
+  let home = std::env::var("HOME").unwrap_or_default();
+  format!("{}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin", home)
+}
+
+/// Try `sample-cd-classify` first; fall back to `python3 classify.py` next to the project.
+fn classify_cmd(extra_args: &[&str]) -> Result<std::process::Command, String> {
+  let search_path = classify_search_path();
+  // Probe: does sample-cd-classify exist on PATH?
+  let probe = Command::new("sample-cd-classify")
+    .env("PATH", &search_path)
+    .arg("--help")
+    .stdout(Stdio::null()).stderr(Stdio::null())
+    .status();
+  if probe.is_ok() {
+    let mut cmd = Command::new("sample-cd-classify");
+    cmd.env("PATH", &search_path);
+    for a in extra_args { cmd.arg(a); }
+    return Ok(cmd);
+  }
+  // Fallback: look for classify.py next to this binary or in ~/binjac/samplem/
+  let home = std::env::var("HOME").unwrap_or_default();
+  let candidates: Vec<PathBuf> = vec![
+    PathBuf::from(&home).join("binjac/samplem/classify.py"),
+    std::env::current_exe().ok()
+      .and_then(|e| e.canonicalize().ok())
+      .map(|e| e.join("../../../../../classify.py"))
+      .unwrap_or_default(),
+  ];
+  for script in candidates {
+    if script.exists() {
+      let mut cmd = Command::new("python3");
+      cmd.env("PATH", &search_path).arg(&script);
+      for a in extra_args { cmd.arg(a); }
+      return Ok(cmd);
+    }
+  }
+  Err("classify.py not found — run `pip install -e .` in the samplem folder".to_string())
+}
+
+#[tauri::command]
+fn classify_preview(path: String) -> Result<std::collections::HashMap<String, u32>, String> {
+  let out = classify_cmd(&[&path, "--json-summary"])?
+    .output().map_err(|e| e.to_string())?;
+  if !out.status.success() {
+    return Err(String::from_utf8_lossy(&out.stderr).to_string());
+  }
+  let s = String::from_utf8_lossy(&out.stdout);
+  serde_json::from_str(&s).map_err(|e| format!("Bad JSON: {}", e))
+}
+
+#[tauri::command]
+async fn run_classify(app: AppHandle, source: String, dest: String) -> Result<(), String> {
+  let mut child = classify_cmd(&[&source, "--copy-into", &dest])?
+    .stdout(Stdio::piped()).stderr(Stdio::piped())
+    .spawn().map_err(|e| e.to_string())?;
+  if let Some(stdout) = child.stdout.take() {
+    let a = app.clone();
+    std::thread::spawn(move || {
+      for line in BufReader::new(stdout).lines().flatten() {
+        let _ = a.emit("classify-log", line);
+      }
+    });
+  }
+  if let Some(stderr) = child.stderr.take() {
+    let a = app.clone();
+    std::thread::spawn(move || {
+      for line in BufReader::new(stderr).lines().flatten() {
+        let _ = a.emit("classify-log", line);
+      }
+    });
+  }
+  child.wait().map_err(|e| e.to_string())?;
+  Ok(())
 }
 
 // ═══════════════════════════════════════════════
@@ -319,8 +470,10 @@ fn main() {
     .invoke_handler(tauri::generate_handler![
       run_samplem, cancel_samplem,
       scan_library, get_library,
-      play_sample, stop_playback,
+      play_sample, stop_playback, read_file_bytes,
       get_waveform,
+      classify_preview, run_classify,
+      detect_bpm_key,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

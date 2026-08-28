@@ -190,6 +190,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--preview", action="store_true", help="Play a short preview while classifying")
     p.add_argument("--copy-into", dest="copy_into", default=None, help="If set, copy files into subfolders by predicted category")
     p.add_argument("--min-confidence", type=float, default=0.0, help="Minimum confidence to sort into category; else 'Unknown'")
+    p.add_argument("--json-summary", action="store_true", help="Print JSON {category: count} to stdout and exit; no copy, no CSV")
     args = p.parse_args(argv)
 
     root = Path(args.root).expanduser().resolve()
@@ -203,7 +204,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
 
     rows: List[Dict[str, str]] = []
-    copy_root: Optional[Path] = Path(args.copy_into).resolve() if args.copy_into else None
+    # --json-summary is a read-only preview: never copy files
+    copy_root: Optional[Path] = None if args.json_summary else (Path(args.copy_into).resolve() if args.copy_into else None)
     if copy_root:
         copy_root.mkdir(parents=True, exist_ok=True)
 
@@ -236,6 +238,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                 "rms_peak_ratio": f"{feats.get('rms_peak_ratio', '')}",
             }
         )
+
+    if args.json_summary:
+        import json
+        from collections import Counter
+        counts = Counter(r["category"] for r in rows)
+        print(json.dumps(dict(sorted(counts.items(), key=lambda x: -x[1]))))
+        return 0
 
     out_csv = Path(args.csv_out).expanduser().resolve()
     write_csv(rows, out_csv)
